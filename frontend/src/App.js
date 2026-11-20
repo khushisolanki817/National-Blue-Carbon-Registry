@@ -27,7 +27,7 @@ import {
   PlusCircle
 } from 'lucide-react';
 
-var API_BASE = 'http://localhost:5000/api';
+var API_BASE = 'https://national-blue-carbon-registry.onrender.com/api';
 
 // Interactive Leaflet Map Sub-Component
 function WetlandMapVisualizer(props) {
