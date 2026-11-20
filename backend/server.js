@@ -74,10 +74,12 @@ const initializeDatabase = async () => {
                 id SERIAL PRIMARY KEY,
                 credit_id INT REFERENCES carbon_credits(id),
                 buyer_name VARCHAR(255) NOT NULL,
-                burn_tx_hash VARCHAR(255) NOT NULL,
+                burn_tx_hash TEXT NOT NULL,
                 certificate_id VARCHAR(100) UNIQUE NOT NULL,
                 retired_at TIMESTAMP DEFAULT NOW()
             );
+
+            ALTER TABLE retirement_records ALTER COLUMN burn_tx_hash TYPE TEXT;
         `);
 
         console.log("✅ Database tables verified and initialized successfully.");
@@ -238,7 +240,7 @@ app.get('/api/plots/all', async (req, res) => {
             FROM mangrove_plots p
             LEFT JOIN organisations o ON p.org_id = o.id
             LEFT JOIN carbon_credits c ON p.id = c.plot_id
-            ORDER BY p.id ASC
+            ORDER BY p.id DESC
         `;
         const result = await pool.query(query);
         
@@ -350,7 +352,7 @@ app.post('/api/buyers/login', async (req, res) => {
     }
 });
 
-// 9. Retire Credits (Clean, Safe & Robust)
+// 9. Retire Credits
 app.post('/api/credits/:id/retire', async (req, res) => {
     const rawTarget = req.params.id;
     const { buyer_name, burn_tx_hash, certificate_id } = req.body;
@@ -364,22 +366,20 @@ app.post('/api/credits/:id/retire', async (req, res) => {
         const parsedId = parseInt(rawTarget, 10);
 
         if (!isNaN(parsedId)) {
-            // Check by credit ID
             let creditCheck = await pool.query(
                 `SELECT c.*, r.id as retirement_id 
                  FROM carbon_credits c
                  LEFT JOIN retirement_records r ON c.id = r.credit_id
-                 WHERE c.id = $1 FOR UPDATE`,
+                 WHERE c.id = $1 FOR UPDATE OF c`,
                 [parsedId]
             );
 
-            // Check by plot ID
             if (creditCheck.rows.length === 0) {
                 creditCheck = await pool.query(
                     `SELECT c.*, r.id as retirement_id 
                      FROM carbon_credits c
                      LEFT JOIN retirement_records r ON c.id = r.credit_id
-                     WHERE c.plot_id = $1 FOR UPDATE`,
+                     WHERE c.plot_id = $1 FOR UPDATE OF c`,
                     [parsedId]
                 );
             }
@@ -389,7 +389,6 @@ app.post('/api/credits/:id/retire', async (req, res) => {
             }
         }
 
-        // Auto-provision fallback if plot/credit not yet indexed
         if (!credit) {
             console.log(`[RETIRE] Auto-provisioning credit for target: ${rawTarget}`);
             let orgCheck = await pool.query('SELECT id FROM organisations LIMIT 1');
@@ -422,7 +421,6 @@ app.post('/api/credits/:id/retire', async (req, res) => {
             credit = newCred.rows[0];
         }
 
-        // Double Retirement Guard
         if (credit.status === 'RETIRED' || credit.retirement_id) {
             await pool.query('ROLLBACK');
             return res.status(400).json({ 
@@ -431,7 +429,6 @@ app.post('/api/credits/:id/retire', async (req, res) => {
             });
         }
 
-        // Update to RETIRED
         await pool.query(`UPDATE carbon_credits SET status = 'RETIRED' WHERE id = $1`, [credit.id]);
 
         const timestamp = Date.now();
